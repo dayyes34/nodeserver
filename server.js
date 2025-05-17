@@ -86,7 +86,17 @@ const exerciseCollectionItemSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
-  // Возможно, в будущем: userId, order, etc.
+  // --- НОВЫЕ ПОЛЯ ДЛЯ ПАПОК-БАНДЛОВ ---
+  isBundle: {
+    type: Boolean,
+    default: false 
+  },
+  bundleDescription: {
+    type: String,
+    trim: true,
+    default: '' 
+  },
+  // --- КОНЕЦ НОВЫХ ПОЛЕЙ ---
   createdAt: {
     type: Date,
     default: Date.now
@@ -122,7 +132,7 @@ app.post('/api/sequencer/save', async (req, res) => {
   try {
     const sessionData = req.body;
     // folderName теперь тоже может прийти
-    const { sessionName, folderName, version, bpm, trackNames, currentSequencerStructure, currentBars, cellsState, loopedBlockIndices, mutedTracks, isMetronomeEnabled } = sessionData;
+    const { sessionName, folderName, version, bpm, trackNames, currentSequencerStructure, currentBars, cellsState, loopedBlockIndices, mutedTracks, isMetronomeEnabled, customFields } = sessionData;
 
     // Обновляем список обязательных полей (folderName опционально на уровне данных, но если передается, должно быть обработано)
     const requiredCoreFields = [
@@ -145,7 +155,8 @@ app.post('/api/sequencer/save', async (req, res) => {
     const newSessionPayload = {
         sessionName: sessionName.trim(),
         folderName: folderName ? folderName.trim() : null, // Если folderName пустой или не передан, сохраняем null
-        version, bpm, trackNames, currentSequencerStructure, currentBars, cellsState, loopedBlockIndices, mutedTracks, isMetronomeEnabled
+        version, bpm, trackNames, currentSequencerStructure, currentBars, cellsState, loopedBlockIndices, mutedTracks, isMetronomeEnabled,
+        customFields: customFields || [] // Добавляем customFields, если они есть
     };
 
     const newSession = new SequencerSession(newSessionPayload);
@@ -196,7 +207,9 @@ app.delete('/api/sequencer/sessions/:id', async (req, res) => {
     if (!result) {
       return res.status(404).json({ message: 'Сессия не найдена для удаления' });
     }
-    res.status(200).json({ message: `Сессия '${result.sessionName}' успешно удалена` });
+    // Также удаляем связанные ExerciseCollectionItem (ссылки на эту сессию)
+    await ExerciseCollectionItem.deleteMany({ originalSessionId: sessionId });
+    res.status(200).json({ message: `Сессия '${result.sessionName}' и все ссылки на нее успешно удалены` });
   } catch (error) {
     console.error('Ошибка при удалении сессии по ID:', error);
     res.status(500).json({ message: 'Ошибка сервера при удалении сессии', error: error.message });
@@ -211,10 +224,9 @@ app.put('/api/sequencer/sessions/:id', async (req, res) => {
       return res.status(400).json({ message: 'Неверный ID сессии.' });
     }
 
-    const { sessionName, bpm, folderName } = req.body;
-    const updateData = {};
+    const { sessionName, bpm, folderName, customFields, ...otherFields } = req.body;
+    const updateData = { ...otherFields }; // Начинаем с других полей, если они есть
 
-    // Валидация и добавление полей в объект обновления
     if (sessionName !== undefined) {
       if (typeof sessionName !== 'string' || sessionName.trim() === '') {
         return res.status(400).json({ message: 'sessionName должно быть непустой строкой.' });
@@ -237,10 +249,16 @@ app.put('/api/sequencer/sessions/:id', async (req, res) => {
       updateData.folderName = folderName === null ? null : folderName.trim();
     }
     
-    // Другие поля, такие как version, trackNames и т.д., здесь не обновляются.
-    // Этот эндпоинт сфокусирован на часто изменяемых метаданных.
-    // currentSequencerStructure, currentBars, cellsState и т.д. обновляются через /save
-
+    // Если customFields переданы, добавляем их к обновлению
+    // Это позволяет этому эндпоинту обновлять и customFields, если клиент их передаст
+    if (customFields !== undefined) {
+        if (!Array.isArray(customFields)) {
+            return res.status(400).json({ message: 'customFields должен быть массивом.' });
+        }
+        // (Можно добавить более строгую валидацию для customFields здесь, как в эндпоинте /customfields)
+        updateData.customFields = customFields;
+    }
+    
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ message: 'Нет данных для обновления.' });
     }
@@ -337,7 +355,7 @@ app.get('/api/my-collection', async (req, res) => {
 // Создать новую папку в коллекции
 app.post('/api/my-collection/folder', async (req, res) => {
   try {
-    const { name, parentId } = req.body;
+    const { name, parentId, isBundle, bundleDescription } = req.body;
     if (!name || name.trim() === '') {
       return res.status(400).json({ message: 'Имя папки не может быть пустым.' });
     }
@@ -356,6 +374,8 @@ app.post('/api/my-collection/folder', async (req, res) => {
       name: name.trim(),
       itemType: 'folder',
       parentId: parentId || null, // Если parentId не предоставлен, это корневая папка
+      isBundle: typeof isBundle === 'boolean' ? isBundle : false, // Устанавливаем значение или дефолт
+      bundleDescription: typeof bundleDescription === 'string' ? bundleDescription.trim() : '' // Устанавливаем значение или дефолт
     });
     await newFolder.save();
     res.status(201).json(newFolder);
@@ -442,6 +462,52 @@ app.delete('/api/my-collection/item/:itemId', async (req, res) => {
   } catch (error) {
     console.error('Ошибка при удалении элемента из коллекции:', error);
     res.status(500).json({ message: 'Ошибка сервера при удалении элемента', error: error.message });
+  }
+});
+
+// НОВЫЙ ЭНДПОИНТ для обновления настроек папки (isBundle, bundleDescription)
+app.put('/api/my-collection/folder/:folderId/settings', async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    const { isBundle, bundleDescription } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(folderId)) {
+      return res.status(400).json({ message: 'Неверный ID папки.' });
+    }
+
+    const updateData = {};
+    if (typeof isBundle === 'boolean') {
+      updateData.isBundle = isBundle;
+    }
+    // Разрешаем пустую строку для bundleDescription
+    if (bundleDescription !== undefined) { // Проверяем на undefined, чтобы можно было передать пустую строку
+        updateData.bundleDescription = typeof bundleDescription === 'string' ? bundleDescription.trim() : '';
+    }
+
+    // Если isBundle устанавливается в false, очищаем описание
+    if (updateData.isBundle === false && updateData.bundleDescription !== undefined) {
+        updateData.bundleDescription = '';
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ message: 'Нет данных для обновления настроек папки.' });
+    }
+
+    const updatedFolder = await ExerciseCollectionItem.findOneAndUpdate(
+      { _id: folderId, itemType: 'folder' }, 
+      { $set: updateData },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedFolder) {
+      return res.status(404).json({ message: 'Папка не найдена или элемент не является папкой.' });
+    }
+
+    res.status(200).json({ message: 'Настройки папки успешно обновлены.', folder: updatedFolder });
+
+  } catch (error) {
+    console.error('Ошибка при обновлении настроек папки:', error);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении настроек папки.', error: error.message });
   }
 });
 
