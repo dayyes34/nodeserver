@@ -29,10 +29,10 @@ const sequencerSessionSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  folderName: { // <-- НОВОЕ ПОЛЕ
+  folderName: { 
     type: String,
     trim: true,
-    default: null // По умолчанию null, если папка не указана
+    default: null 
   },
   version: String,
   bpm: Number,
@@ -43,79 +43,93 @@ const sequencerSessionSchema = new mongoose.Schema({
   loopedBlockIndices: [Number],
   mutedTracks: [String],
   isMetronomeEnabled: Boolean,
+  customFields: {
+    type: [{
+      key: { type: String, required: true, trim: true },
+      value: { type: String, trim: true, default: '' }
+      // _id: false // Раскомментируйте, если не нужны ID для каждой пары ключ-значение в массиве
+    }],
+    default: []
+  },
+  parentId: { // <-- ИЗМЕНЕНИЕ: Добавлено поле parentId
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ExerciseCollectionItem', // Ссылка на папку в коллекции
+    default: null // null означает, что сессия либо в корне коллекции, либо "сырая"
+  },
   createdAt: {
     type: Date,
     default: Date.now
   },
-  customFields: {
-    type: [{
-      key: { type: String, required: true, trim: true },
-      value: { type: String, trim: true, default: '' } // Значение может быть пустой строкой
-      // _id: false // Раскомментируйте, если не нужны ID для каждой пары ключ-значение в массиве
-    }],
-    default: []
+  updatedAt: { // <-- ИЗМЕНЕНИЕ: Добавлено поле updatedAt для отслеживания изменений
+    type: Date,
+    default: Date.now
   }
+});
+
+// Обновляем поле updatedAt перед каждым сохранением
+sequencerSessionSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
 });
 
 const SequencerSession = mongoose.model('SequencerSession', sequencerSessionSchema);
 
-// Новая схема и модель для элементов коллекции упражнений пользователя
+// Схема и модель для элементов коллекции упражнений пользователя (Папки)
 const exerciseCollectionItemSchema = new mongoose.Schema({
   name: {
     type: String,
     required: true,
     trim: true
   },
-  itemType: {
-    type: String, // 'folder' или 'exerciseLink'
+  itemType: { // Остается только 'folder', так как 'exerciseLink' больше не используется напрямую для новых сессий
+    type: String,
     required: true,
-    enum: ['folder', 'exerciseLink']
+    enum: ['folder', 'exerciseLink'], // 'exerciseLink' может остаться для совместимости или старых данных
+    default: 'folder'
   },
-  parentId: { // Ссылка на родительскую папку в этой же коллекции
+  parentId: { 
     type: mongoose.Schema.Types.ObjectId,
     ref: 'ExerciseCollectionItem',
-    default: null // null для элементов в корне
+    default: null 
   },
-  originalSessionId: { // ID оригинальной сессии, если itemType === 'exerciseLink'
+  // originalSessionId и originalSessionNameCache больше не являются основными для новой логики,
+  // но могут остаться для старых данных типа 'exerciseLink'
+  originalSessionId: { 
     type: mongoose.Schema.Types.ObjectId,
     ref: 'SequencerSession',
     default: null
   },
-  originalSessionNameCache: { // Кэшированное имя оригинальной сессии для удобства
+  originalSessionNameCache: { 
     type: String,
     trim: true,
     default: ''
   },
-  // Возможно, в будущем: userId, order, etc.
   createdAt: {
     type: Date,
     default: Date.now
   }
 });
 
-// Индекс для быстрого поиска дочерних элементов
 exerciseCollectionItemSchema.index({ parentId: 1, itemType: 1, name: 1 });
 
 const ExerciseCollectionItem = mongoose.model('ExerciseCollectionItem', exerciseCollectionItemSchema);
 
-// Новая схема и модель для предопределенных ключей кастомных полей
 const predefinedKeySchema = new mongoose.Schema({
-  keyName: { // Техническое имя ключа, используется для хранения в customFields сессии
+  keyName: { 
     type: String,
     required: true,
     trim: true,
-    unique: true // Каждый ключ должен быть уникальным
+    unique: true 
   },
-  keyLabel: { // Человекочитаемая метка для отображения в UI
+  keyLabel: { 
     type: String,
     required: true,
     trim: true
   },
-  order: { // Порядок отображения в UI
+  order: { 
     type: Number,
     default: 0
   },
-  // Можно добавить fieldType: String (например, 'text', 'select', 'number') для будущих расширений
   createdAt: {
     type: Date,
     default: Date.now
@@ -128,50 +142,67 @@ app.get('/', (req, res) => {
   res.send('Сервер секвенсора работает!');
 });
 
+// --- API для SequencerSession ---
+
 app.post('/api/sequencer/save', async (req, res) => {
   try {
-    const sessionData = req.body;
-    // folderName теперь тоже может прийти
-    const { sessionName, folderName, version, bpm, trackNames, currentSequencerStructure, currentBars, cellsState, loopedBlockIndices, mutedTracks, isMetronomeEnabled } = sessionData;
+    const {
+      sessionName,
+      folderName, // Это строковый путь, который мы продолжим сохранять для информации
+      bpm,
+      trackNames,
+      currentSequencerStructure,
+      currentBars,
+      cellsState,
+      loopedBlockIndices,
+      mutedTracks,
+      isMetronomeEnabled,
+      version,
+      customFields,
+      targetCollectionParentId // <-- ИЗМЕНЕНИЕ: ID папки из коллекции
+    } = req.body;
 
-    // Обновляем список обязательных полей (folderName опционально на уровне данных, но если передается, должно быть обработано)
-    const requiredCoreFields = [
-        'sessionName', 'version', 'bpm', 'trackNames', 'currentSequencerStructure',
-        'currentBars', 'cellsState', 'loopedBlockIndices', 'mutedTracks', 'isMetronomeEnabled'
-    ];
-
-    for (const field of requiredCoreFields) {
-        if (!sessionData.hasOwnProperty(field) || sessionData[field] === null || (typeof sessionData[field] === 'string' && sessionData[field].trim() === '' && field === 'sessionName')) {
-             // Для sessionName проверяем на пустую строку, для остальных - просто на наличие и не null
-            if (field === 'sessionName' && (sessionData[field] === null || sessionData[field].trim() === '')) {
-                 return res.status(400).json({ message: `Отсутствует или не заполнено обязательное поле: ${field}` });
-            } else if (field !== 'sessionName' && sessionData[field] === null) {
-                 return res.status(400).json({ message: `Отсутствует обязательное поле: ${field}` });
-            }
-        }
+    // Валидация базовых полей
+    if (!sessionName || !bpm || !trackNames || !currentSequencerStructure || !currentBars || !cellsState) {
+      return res.status(400).json({ message: 'Отсутствуют обязательные поля для сохранения сессии.' });
     }
-    
-    // Создаем объект для сохранения, включая folderName (будет null если не предоставлен)
-    const newSessionPayload = {
-        sessionName: sessionName.trim(),
-        folderName: folderName ? folderName.trim() : null, // Если folderName пустой или не передан, сохраняем null
-        version, bpm, trackNames, currentSequencerStructure, currentBars, cellsState, loopedBlockIndices, mutedTracks, isMetronomeEnabled
-    };
+    // parentId может быть null, поэтому дополнительная проверка не нужна, если он не передан
 
-    const newSession = new SequencerSession(newSessionPayload);
-    await newSession.save();
-    res.status(201).json({ message: `Сессия '${newSession.sessionName}' ${newSession.folderName ? 'в папке \'' + newSession.folderName + '\'' : ''} успешно сохранена!`, sessionId: newSession._id });
+    const newSession = new SequencerSession({
+      sessionName: sessionName.trim(),
+      folderName: folderName ? folderName.trim() : null,
+      version: version || "1.0",
+      bpm,
+      trackNames,
+      currentSequencerStructure,
+      currentBars,
+      cellsState,
+      loopedBlockIndices: loopedBlockIndices || [],
+      mutedTracks: mutedTracks || [],
+      isMetronomeEnabled: isMetronomeEnabled || false,
+      customFields: customFields || [],
+      parentId: targetCollectionParentId || null // <-- ИЗМЕНЕНИЕ: Устанавливаем parentId
+    });
+
+    const savedSession = await newSession.save();
+    res.status(201).json({ 
+      message: `Сессия '${savedSession.sessionName}' успешно сохранена!`, 
+      sessionId: savedSession._id, 
+      session: savedSession // Возвращаем сохраненную сессию
+    });
+
   } catch (error) {
-    console.error('Ошибка при сохранении данных секвенсора:', error);
-    res.status(500).json({ message: 'Ошибка сервера при сохранении данных', error: error.message });
+    console.error('[POST /api/sequencer/save] Ошибка сохранения сессии:', error);
+    res.status(500).json({ message: 'Ошибка сервера при сохранении сессии', error: error.message });
   }
 });
 
 app.get('/api/sequencer/sessions', async (req, res) => {
   try {
-    // Теперь также выбираем folderName
-    const sessions = await SequencerSession.find({}, 'sessionName folderName createdAt')
-                                           .sort({ folderName: 1, createdAt: -1 }); // Сортируем сначала по папке, потом по дате
+    // Возвращаем все сессии, клиент будет фильтровать "сырые" по parentId === null при необходимости
+    // Добавляем parentId и folderName в выборку для отображения на клиенте
+    const sessions = await SequencerSession.find({})
+                                           .sort({ updatedAt: -1, createdAt: -1 }); // Сортируем по дате обновления/создания
     res.status(200).json(sessions);
   } catch (error) {
     console.error('Ошибка при получении списка сессий:', error);
@@ -185,7 +216,7 @@ app.get('/api/sequencer/sessions/:id', async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(sessionId)) {
         return res.status(400).json({ message: 'Неверный ID сессии' });
     }
-    const session = await SequencerSession.findById(sessionId); // Возвращает весь документ
+    const session = await SequencerSession.findById(sessionId); 
     if (!session) {
       return res.status(404).json({ message: 'Сессия не найдена' });
     }
@@ -202,6 +233,13 @@ app.delete('/api/sequencer/sessions/:id', async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(sessionId)) {
         return res.status(400).json({ message: 'Неверный ID сессии' });
     }
+    // Перед удалением сессии, если она была привязана к ExerciseCollectionItem (старая логика exerciseLink),
+    // то такие ссылки должны стать "битыми" или их нужно удалять отдельно, если такая логика была.
+    // В новой унифицированной системе, сессия - это и есть элемент коллекции, если у нее есть parentId.
+    // Если мы удаляем сессию, которая была в коллекции (имела parentId),
+    // то она просто исчезнет из этой коллекции при следующем запросе GET /api/my-collection.
+    // Никаких специальных действий с ExerciseCollectionItem здесь не требуется при удалении самой SequencerSession.
+    
     const result = await SequencerSession.findByIdAndDelete(sessionId);
     if (!result) {
       return res.status(404).json({ message: 'Сессия не найдена для удаления' });
@@ -213,22 +251,18 @@ app.delete('/api/sequencer/sessions/:id', async (req, res) => {
   }
 });
 
-// Заменяем эндпоинт для тегов на эндпоинт для кастомных полей
 app.put('/api/sequencer/sessions/:id/customfields', async (req, res) => {
   try {
     const sessionId = req.params.id;
-    const { fields } = req.body; // Ожидаем массив объектов [{ key: "ключ", value: "значение" }]
+    const { fields } = req.body; 
 
     if (!mongoose.Types.ObjectId.isValid(sessionId)) {
       return res.status(400).json({ message: 'Неверный ID сессии.' });
     }
-
     if (!Array.isArray(fields)) {
       return res.status(400).json({ message: 'Кастомные поля должны быть массивом.' });
     }
 
-    // Валидация, что все элементы в массиве fields являются объектами с обязательным ключом (строка)
-    // и опциональным значением (строка)
     for (const field of fields) {
       if (typeof field !== 'object' || field === null) {
         return res.status(400).json({ message: 'Каждый элемент в массиве кастомных полей должен быть объектом.' });
@@ -240,21 +274,19 @@ app.put('/api/sequencer/sessions/:id/customfields', async (req, res) => {
         return res.status(400).json({ message: 'Значение (value) кастомного поля должно быть строкой.' });
       }
     }
-    // Приводим к ожидаемому формату (на случай, если пришли лишние поля в объектах)
     const sanitizedFields = fields.map(f => ({ 
       key: f.key.trim(), 
       value: (f.value || '').trim() 
     }));
 
-    const updatedSession = await SequencerSession.findByIdAndUpdate(
-      sessionId,
-      { $set: { customFields: sanitizedFields } }, // Полностью заменяем массив кастомных полей
-      { new: true, runValidators: true } // Возвращаем обновленный документ и запускаем валидаторы схемы
-    );
-
-    if (!updatedSession) {
+    const session = await SequencerSession.findById(sessionId);
+    if (!session) {
       return res.status(404).json({ message: 'Сессия не найдена для обновления кастомных полей.' });
     }
+    
+    session.customFields = sanitizedFields;
+    // session.updatedAt будет обновлено pre('save') хуком
+    const updatedSession = await session.save();
 
     res.status(200).json({ message: `Кастомные поля для сессии '${updatedSession.sessionName}' успешно обновлены.`, session: updatedSession });
 
@@ -267,33 +299,112 @@ app.put('/api/sequencer/sessions/:id/customfields', async (req, res) => {
   }
 });
 
-// --- API для коллекции упражнений пользователя ---
-
-// Получить все элементы коллекции (папки и ссылки на упражнения)
-app.get('/api/my-collection', async (req, res) => {
+// --- ИЗМЕНЕНИЕ: Новый эндпоинт для установки parentId (привязки к папке коллекции) ---
+app.put('/api/sequencer/sessions/:id/set-collection-parent', async (req, res) => {
   try {
-    // Пока просто возвращаем все. В будущем можно добавить фильтрацию по parentId
-    const items = await ExerciseCollectionItem.find().sort({ parentId: 1, itemType: 1, name: 1 });
-    res.status(200).json(items);
+    const sessionId = req.params.id;
+    const { parentId, folderPath } = req.body; // parentId - ID папки ExerciseCollectionItem, folderPath - строковый путь
+
+    if (!mongoose.Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({ message: 'Некорректный ID сессии.' });
+    }
+    // parentId может быть null (для отвязки от коллекции или перемещения в корень "Моей коллекции")
+    // или валидным ObjectId, если привязываем к папке.
+    if (parentId !== null && parentId !== undefined && parentId !== 'null' && !mongoose.Types.ObjectId.isValid(parentId)) {
+      return res.status(400).json({ message: 'Некорректный ID родительской папки.' });
+    }
+
+    const sessionToUpdate = await SequencerSession.findById(sessionId);
+    if (!sessionToUpdate) {
+      return res.status(404).json({ message: 'Сессия для обновления не найдена.' });
+    }
+
+    // Если parentId передан и он валиден (или это строка 'null'), проверяем папку
+    let targetParentIdFinal = null;
+    if (parentId && parentId !== 'null') {
+        targetParentIdFinal = new mongoose.Types.ObjectId(parentId);
+        const parentFolder = await ExerciseCollectionItem.findOne({ _id: targetParentIdFinal, itemType: 'folder' });
+        if (!parentFolder) {
+            return res.status(404).json({ message: 'Целевая папка в коллекции не найдена или не является папкой.' });
+        }
+    } else if (parentId === 'null' || parentId === null || parentId === undefined) {
+        targetParentIdFinal = null; // Отвязка от папки или помещение в корень
+    }
+    
+    sessionToUpdate.parentId = targetParentIdFinal;
+    sessionToUpdate.folderName = folderPath === undefined ? sessionToUpdate.folderName : (folderPath || null);
+    // updatedAt будет обновлен pre('save') хуком
+    const updatedSession = await sessionToUpdate.save();
+    res.json({ message: 'Привязка сессии к коллекции обновлена.', session: updatedSession });
+
   } catch (error) {
-    console.error('Ошибка при получении коллекции упражнений:', error);
-    res.status(500).json({ message: 'Ошибка сервера при получении коллекции', error: error.message });
+    console.error('[PUT /sessions/:id/set-collection-parent]', error);
+    res.status(500).json({ message: 'Ошибка при обновлении привязки сессии к коллекции', details: error.message });
   }
 });
 
-// Создать новую папку в коллекции
+
+// --- API для коллекции (Папки и Сессии внутри них) ---
+
+// ИЗМЕНЕНИЕ: Получить элементы коллекции (папки И сессии) для указанного parentId
+app.get('/api/my-collection', async (req, res) => {
+  try {
+    const parentIdQuery = req.query.parentId; // Может быть ID папки или undefined/null/'null' для корня
+    let queryParentId = null;
+
+    if (parentIdQuery && parentIdQuery !== 'null' && mongoose.Types.ObjectId.isValid(parentIdQuery)) {
+      queryParentId = new mongoose.Types.ObjectId(parentIdQuery);
+    }
+    
+    // 1. Fetch folders (ExerciseCollectionItem с itemType: 'folder')
+    const folderCriteria = { itemType: 'folder', parentId: queryParentId };
+    const folders = await ExerciseCollectionItem.find(folderCriteria).sort({ name: 1 });
+
+    // 2. Fetch sessions (SequencerSession) с тем же parentId
+    const sessionCriteria = { parentId: queryParentId };
+    const sessions = await SequencerSession.find(sessionCriteria).sort({ sessionName: 1 });
+
+    // 3. Combine and add itemTypeFromBackend для удобства клиента
+    const combinedResults = [
+      ...folders.map(f => ({ ...f.toObject(), itemTypeFromBackend: 'folder' })),
+      ...sessions.map(s => ({ 
+          ...s.toObject(), 
+          name: s.sessionName, // Добавляем поле name для унификации с папками на клиенте
+          itemTypeFromBackend: 'session' 
+      }))
+    ];
+    
+    // Сортируем смешанный результат: сначала все папки по имени, потом все сессии по имени
+    combinedResults.sort((a, b) => {
+        if (a.itemTypeFromBackend === 'folder' && b.itemTypeFromBackend !== 'folder') return -1;
+        if (a.itemTypeFromBackend !== 'folder' && b.itemTypeFromBackend === 'folder') return 1;
+        // Если типы одинаковые (обе папки или обе сессии), сортируем по имени
+        const nameA = a.name || a.sessionName || '';
+        const nameB = b.name || b.sessionName || '';
+        return nameA.localeCompare(nameB);
+    });
+
+    res.status(200).json(combinedResults);
+  } catch (error) {
+    console.error('[GET /api/my-collection]', error);
+    res.status(500).json({ message: 'Ошибка загрузки организованной коллекции', details: error.message });
+  }
+});
+
 app.post('/api/my-collection/folder', async (req, res) => {
   try {
     const { name, parentId } = req.body;
     if (!name || name.trim() === '') {
       return res.status(400).json({ message: 'Имя папки не может быть пустым.' });
     }
-    // Проверка на валидность parentId, если он предоставлен
-    if (parentId && !mongoose.Types.ObjectId.isValid(parentId)) {
-      return res.status(400).json({ message: 'Неверный ID родительской папки.' });
-    }
-    if (parentId) {
-        const parentFolder = await ExerciseCollectionItem.findById(parentId);
+    
+    let finalParentId = null;
+    if (parentId && parentId !== 'null') {
+        if (!mongoose.Types.ObjectId.isValid(parentId)) {
+            return res.status(400).json({ message: 'Неверный ID родительской папки.' });
+        }
+        finalParentId = new mongoose.Types.ObjectId(parentId);
+        const parentFolder = await ExerciseCollectionItem.findById(finalParentId);
         if (!parentFolder || parentFolder.itemType !== 'folder') {
             return res.status(404).json({ message: 'Родительская папка не найдена или не является папкой.'});
         }
@@ -301,8 +412,8 @@ app.post('/api/my-collection/folder', async (req, res) => {
 
     const newFolder = new ExerciseCollectionItem({
       name: name.trim(),
-      itemType: 'folder',
-      parentId: parentId || null, // Если parentId не предоставлен, это корневая папка
+      itemType: 'folder', // Явно указываем тип
+      parentId: finalParentId,
     });
     await newFolder.save();
     res.status(201).json(newFolder);
@@ -312,16 +423,18 @@ app.post('/api/my-collection/folder', async (req, res) => {
   }
 });
 
-// Добавить ссылки на упражнения в папку коллекции
+// Эндпоинт POST /api/my-collection/add-exercise-links остается для совместимости или специфичных нужд,
+// но основной поток добавления упражнений теперь идет через сохранение SequencerSession с parentId.
+// Если он больше не нужен, его можно будет удалить.
 app.post('/api/my-collection/add-exercise-links', async (req, res) => {
+  // Логика этого эндпоинта остается прежней, так как он может использоваться для старых сценариев
+  // или если вы решите вернуть функционал "ссылок" в каком-то виде.
+  // Но для нового унифицированного подхода он не является основным.
   try {
-    const { targetParentId, exercises } = req.body; // exercises - массив объектов { originalSessionId, originalSessionNameCache, name (новое имя в коллекции) }
-
+    const { targetParentId, exercises } = req.body; 
     if (!exercises || !Array.isArray(exercises) || exercises.length === 0) {
       return res.status(400).json({ message: 'Не предоставлены упражнения для добавления.' });
     }
-
-    // Проверка targetParentId (может быть null для корня)
     if (targetParentId && !mongoose.Types.ObjectId.isValid(targetParentId)) {
       return res.status(400).json({ message: 'Неверный ID целевой папки.' });
     }
@@ -331,38 +444,34 @@ app.post('/api/my-collection/add-exercise-links', async (req, res) => {
             return res.status(404).json({ message: 'Целевая папка не найдена или не является папкой.'});
         }
     }
-
     const createdItems = [];
     for (const ex of exercises) {
       if (!ex.originalSessionId || !mongoose.Types.ObjectId.isValid(ex.originalSessionId)) {
-        // Можно пропустить это упражнение или вернуть ошибку для всего запроса
         console.warn('Пропущено упражнение с неверным originalSessionId:', ex);
         continue;
       }
       if (!ex.name || ex.name.trim() === '') {
         return res.status(400).json({ message: `Имя для упражнения '${ex.originalSessionNameCache || ex.originalSessionId}' не может быть пустым.` });
       }
-
       const newExerciseLink = new ExerciseCollectionItem({
-        name: ex.name.trim(), // Имя, которое будет в вашей коллекции
+        name: ex.name.trim(), 
         itemType: 'exerciseLink',
         parentId: targetParentId || null,
         originalSessionId: ex.originalSessionId,
-        originalSessionNameCache: ex.originalSessionNameCache || 'Упражнение' // Если имя не передано, используем дефолтное
+        originalSessionNameCache: ex.originalSessionNameCache || 'Упражнение' 
       });
       await newExerciseLink.save();
       createdItems.push(newExerciseLink);
     }
-
     res.status(201).json(createdItems);
-
   } catch (error) {
     console.error('Ошибка при добавлении ссылок на упражнения:', error);
     res.status(500).json({ message: 'Ошибка сервера при добавлении упражнений', error: error.message });
   }
 });
 
-// Удалить элемент (папку или ссылку на упражнение) из коллекции
+// ИЗМЕНЕНИЕ: Удаление элемента из коллекции (только папки ExerciseCollectionItem)
+// При удалении папки, также удаляются все SequencerSession, которые на нее ссылались.
 app.delete('/api/my-collection/item/:itemId', async (req, res) => {
   try {
     const { itemId } = req.params;
@@ -372,32 +481,56 @@ app.delete('/api/my-collection/item/:itemId', async (req, res) => {
 
     const itemToDelete = await ExerciseCollectionItem.findById(itemId);
     if (!itemToDelete) {
-      return res.status(404).json({ message: 'Элемент не найден.' });
+      return res.status(404).json({ message: 'Элемент коллекции (папка) не найден.' });
     }
 
-    // Если это папка, проверяем, пуста ли она
-    if (itemToDelete.itemType === 'folder') {
-      const childrenCount = await ExerciseCollectionItem.countDocuments({ parentId: itemId });
-      if (childrenCount > 0) {
-        return res.status(400).json({ message: 'Папка не пуста. Сначала удалите или переместите ее содержимое.' });
-      }
+    if (itemToDelete.itemType !== 'folder') {
+        // Этот эндпоинт теперь предназначен ТОЛЬКО для удаления папок.
+        // Старые 'exerciseLink' если и остались, можно удалить, но основной кейс - папки.
+        // Если это exerciseLink, его можно просто удалить.
+        if (itemToDelete.itemType === 'exerciseLink') {
+            await ExerciseCollectionItem.findByIdAndDelete(itemId);
+            return res.status(200).json({ message: `Ссылка на упражнение '${itemToDelete.name}' успешно удалена.` });
+        }
+        return res.status(400).json({ message: 'Удаление через этот эндпоинт поддерживается только для папок.' });
     }
 
-    await ExerciseCollectionItem.findByIdAndDelete(itemId);
-    res.status(200).json({ message: `Элемент '${itemToDelete.name}' успешно удален.` });
+    // Если это папка, каскадно удаляем связанные SequencerSession
+    // Сначала рекурсивно удаляем все дочерние папки и их содержимое
+    const deleteFolderAndContentsRecursive = async (folderId) => {
+        // Найти и удалить все сессии в текущей папке
+        const childSessions = await SequencerSession.find({ parentId: folderId });
+        if (childSessions.length > 0) {
+            await SequencerSession.deleteMany({ parentId: folderId });
+            console.log(`Удалено ${childSessions.length} сессий из папки ${folderId}`);
+        }
+
+        // Найти и рекурсивно удалить все дочерние папки
+        const childFolders = await ExerciseCollectionItem.find({ parentId: folderId, itemType: 'folder' });
+        for (const childFolder of childFolders) {
+            await deleteFolderAndContentsRecursive(childFolder._id);
+        }
+
+        // Удалить саму папку
+        await ExerciseCollectionItem.findByIdAndDelete(folderId);
+        console.log(`Удалена папка ${folderId}`);
+    };
+
+    await deleteFolderAndContentsRecursive(itemToDelete._id);
+    
+    res.status(200).json({ message: `Папка '${itemToDelete.name}' и все ее содержимое успешно удалены.` });
 
   } catch (error) {
-    console.error('Ошибка при удалении элемента из коллекции:', error);
-    res.status(500).json({ message: 'Ошибка сервера при удалении элемента', error: error.message });
+    console.error('[DELETE /api/my-collection/item/:itemId]', error);
+    res.status(500).json({ message: 'Ошибка при удалении элемента из коллекции', details: error.message });
   }
 });
 
 // --- API для Предопределенных Ключей ---
-
-// Получить все предопределенные ключи
+// (Эта часть остается без изменений, так как она уже была корректной)
 app.get('/api/admin/predefined-keys', async (req, res) => {
   try {
-    const keys = await PredefinedKey.find().sort({ order: 1, keyLabel: 1 }); // Сортируем по порядку и метке
+    const keys = await PredefinedKey.find().sort({ order: 1, keyLabel: 1 });
     res.status(200).json(keys);
   } catch (error) {
     console.error('Ошибка при получении предопределенных ключей:', error);
@@ -405,19 +538,16 @@ app.get('/api/admin/predefined-keys', async (req, res) => {
   }
 });
 
-// Добавить новый предопределенный ключ
 app.post('/api/admin/predefined-keys', async (req, res) => {
   try {
     const { keyName, keyLabel, order } = req.body;
     if (!keyName || !keyName.trim() || !keyLabel || !keyLabel.trim()) {
       return res.status(400).json({ message: 'keyName и keyLabel являются обязательными полями.' });
     }
-    // Проверка на уникальность keyName, Mongoose сделает это на уровне БД, но можно и предварительно
     const existingKey = await PredefinedKey.findOne({ keyName: keyName.trim() });
     if (existingKey) {
         return res.status(400).json({ message: `Предопределенный ключ с именем (keyName) "${keyName}" уже существует.` });
     }
-
     const newKey = new PredefinedKey({
       keyName: keyName.trim(),
       keyLabel: keyLabel.trim(),
@@ -427,14 +557,13 @@ app.post('/api/admin/predefined-keys', async (req, res) => {
     res.status(201).json(newKey);
   } catch (error) {
     console.error('Ошибка при создании предопределенного ключа:', error);
-    if (error.code === 11000) { // Ошибка дублирования MongoDB
+    if (error.code === 11000) { 
         return res.status(400).json({ message: `Предопределенный ключ с таким keyName уже существует.` });
     }
     res.status(500).json({ message: 'Ошибка сервера при создании предопределенного ключа', error: error.message });
   }
 });
 
-// Удалить предопределенный ключ по ID
 app.delete('/api/admin/predefined-keys/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -445,8 +574,6 @@ app.delete('/api/admin/predefined-keys/:id', async (req, res) => {
     if (!result) {
       return res.status(404).json({ message: 'Предопределенный ключ не найден для удаления.' });
     }
-    // Важно: Удаление PredefinedKey не удаляет автоматически соответствующие поля из customFields существующих сессий.
-    // Это нужно будет обрабатывать отдельно, если такая логика потребуется (например, при отображении или миграции).
     res.status(200).json({ message: `Предопределенный ключ '${result.keyLabel}' успешно удален.` });
   } catch (error) {
     console.error('Ошибка при удалении предопределенного ключа:', error);
@@ -454,7 +581,6 @@ app.delete('/api/admin/predefined-keys/:id', async (req, res) => {
   }
 });
 
-// (Опционально) Обновить предопределенный ключ
 app.put('/api/admin/predefined-keys/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -463,15 +589,17 @@ app.put('/api/admin/predefined-keys/:id', async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'Неверный ID предопределенного ключа.' });
     }
-
     const updateData = {};
     if (keyLabel && keyLabel.trim()) updateData.keyLabel = keyLabel.trim();
-    if (order !== undefined) updateData.order = order;
-    // keyName обычно не обновляют после создания, т.к. он используется как идентификатор в данных сессий
-    // Если нужно разрешить обновление keyName, это потребует более сложной логики (миграция данных в сессиях).
+    if (order !== undefined && !isNaN(parseInt(order))) updateData.order = parseInt(order);
+
 
     if (Object.keys(updateData).length === 0) {
-        return res.status(400).json({ message: 'Нет данных для обновления.' });
+        return res.status(400).json({ message: 'Нет данных для обновления (keyLabel или order).' });
+    }
+    // Не позволяем редактировать keyName, он должен быть неизменным
+    if (req.body.keyName) {
+        return res.status(400).json({ message: 'Техническое имя ключа (keyName) не может быть изменено.' });
     }
 
     const updatedKey = await PredefinedKey.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true });
