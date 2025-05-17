@@ -274,6 +274,32 @@ app.post('/api/my-collection/add-exercise-links', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Сервер запущен на порту ${PORT}`);
+// Удалить элемент (папку или ссылку на упражнение) из коллекции
+app.delete('/api/my-collection/item/:itemId', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ message: 'Неверный ID элемента.' });
+    }
+
+    const itemToDelete = await ExerciseCollectionItem.findById(itemId);
+    if (!itemToDelete) {
+      return res.status(404).json({ message: 'Элемент не найден.' });
+    }
+
+    // Если это папка, проверяем, пуста ли она
+    if (itemToDelete.itemType === 'folder') {
+      const childrenCount = await ExerciseCollectionItem.countDocuments({ parentId: itemId });
+      if (childrenCount > 0) {
+        return res.status(400).json({ message: 'Папка не пуста. Сначала удалите или переместите ее содержимое.' });
+      }
+    }
+
+    await ExerciseCollectionItem.findByIdAndDelete(itemId);
+    res.status(200).json({ message: `Элемент '${itemToDelete.name}' успешно удален.` });
+
+  } catch (error) {
+    console.error('Ошибка при удалении элемента из коллекции:', error);
+    res.status(500).json({ message: 'Ошибка сервера при удалении элемента', error: error.message });
+  }
 });
