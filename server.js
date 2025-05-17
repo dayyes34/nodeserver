@@ -303,3 +303,7 @@ app.delete('/api/my-collection/item/:itemId', async (req, res) => {
     res.status(500).json({ message: 'Ошибка сервера при удалении элемента', error: error.message });
   }
 });
+
+app.listen(PORT, () => {
+  console.log(`Сервер запущен на порту ${PORT}`);
+});
