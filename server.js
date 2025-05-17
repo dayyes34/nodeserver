@@ -47,8 +47,12 @@ const sequencerSessionSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-  customTags: { // Пользовательские теги
-    type: [String],
+  customFields: {
+    type: [{
+      key: { type: String, required: true, trim: true },
+      value: { type: String, trim: true, default: '' } // Значение может быть пустой строкой
+      // _id: false // Раскомментируйте, если не нужны ID для каждой пары ключ-значение в массиве
+    }],
     default: []
   }
 });
@@ -183,44 +187,57 @@ app.delete('/api/sequencer/sessions/:id', async (req, res) => {
   }
 });
 
-// Новый эндпоинт для обновления тегов сессии
-app.put('/api/sequencer/sessions/:id/tags', async (req, res) => {
+// Заменяем эндпоинт для тегов на эндпоинт для кастомных полей
+app.put('/api/sequencer/sessions/:id/customfields', async (req, res) => {
   try {
     const sessionId = req.params.id;
-    const { tags } = req.body; // Ожидаем массив строк [{ tags: ["tag1", "tag2"] }]
+    const { fields } = req.body; // Ожидаем массив объектов [{ key: "ключ", value: "значение" }]
 
     if (!mongoose.Types.ObjectId.isValid(sessionId)) {
       return res.status(400).json({ message: 'Неверный ID сессии.' });
     }
 
-    if (!Array.isArray(tags)) {
-      return res.status(400).json({ message: 'Теги должны быть массивом.' });
+    if (!Array.isArray(fields)) {
+      return res.status(400).json({ message: 'Кастомные поля должны быть массивом.' });
     }
 
-    // Валидация, что все элементы в массиве tags являются строками (опционально, но рекомендуется)
-    if (!tags.every(tag => typeof tag === 'string')) {
-      return res.status(400).json({ message: 'Все теги в массиве должны быть строками.' });
+    // Валидация, что все элементы в массиве fields являются объектами с обязательным ключом (строка)
+    // и опциональным значением (строка)
+    for (const field of fields) {
+      if (typeof field !== 'object' || field === null) {
+        return res.status(400).json({ message: 'Каждый элемент в массиве кастомных полей должен быть объектом.' });
+      }
+      if (!field.hasOwnProperty('key') || typeof field.key !== 'string' || field.key.trim() === '') {
+        return res.status(400).json({ message: 'Каждое кастомное поле должно иметь непустой строковый ключ (key).' });
+      }
+      if (field.hasOwnProperty('value') && typeof field.value !== 'string') {
+        return res.status(400).json({ message: 'Значение (value) кастомного поля должно быть строкой.' });
+      }
     }
+    // Приводим к ожидаемому формату (на случай, если пришли лишние поля в объектах)
+    const sanitizedFields = fields.map(f => ({ 
+      key: f.key.trim(), 
+      value: (f.value || '').trim() 
+    }));
 
     const updatedSession = await SequencerSession.findByIdAndUpdate(
       sessionId,
-      { $set: { customTags: tags } }, // Полностью заменяем массив тегов
+      { $set: { customFields: sanitizedFields } }, // Полностью заменяем массив кастомных полей
       { new: true, runValidators: true } // Возвращаем обновленный документ и запускаем валидаторы схемы
     );
 
     if (!updatedSession) {
-      return res.status(404).json({ message: 'Сессия не найдена для обновления тегов.' });
+      return res.status(404).json({ message: 'Сессия не найдена для обновления кастомных полей.' });
     }
 
-    res.status(200).json({ message: `Теги для сессии '${updatedSession.sessionName}' успешно обновлены.`, session: updatedSession });
+    res.status(200).json({ message: `Кастомные поля для сессии '${updatedSession.sessionName}' успешно обновлены.`, session: updatedSession });
 
   } catch (error) {
-    console.error('Ошибка при обновлении тегов сессии:', error);
-    // Более детальная ошибка, если это ошибка валидации Mongoose
+    console.error('Ошибка при обновлении кастомных полей сессии:', error);
     if (error.name === 'ValidationError') {
-        return res.status(400).json({ message: 'Ошибка валидации при обновлении тегов', errors: error.errors });
+        return res.status(400).json({ message: 'Ошибка валидации при обновлении кастомных полей', errors: error.errors });
     }
-    res.status(500).json({ message: 'Ошибка сервера при обновлении тегов сессии', error: error.message });
+    res.status(500).json({ message: 'Ошибка сервера при обновлении кастомных полей сессии', error: error.message });
   }
 });
 
