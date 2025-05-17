@@ -98,6 +98,32 @@ exerciseCollectionItemSchema.index({ parentId: 1, itemType: 1, name: 1 });
 
 const ExerciseCollectionItem = mongoose.model('ExerciseCollectionItem', exerciseCollectionItemSchema);
 
+// Новая схема и модель для предопределенных ключей кастомных полей
+const predefinedKeySchema = new mongoose.Schema({
+  keyName: { // Техническое имя ключа, используется для хранения в customFields сессии
+    type: String,
+    required: true,
+    trim: true,
+    unique: true // Каждый ключ должен быть уникальным
+  },
+  keyLabel: { // Человекочитаемая метка для отображения в UI
+    type: String,
+    required: true,
+    trim: true
+  },
+  order: { // Порядок отображения в UI
+    type: Number,
+    default: 0
+  },
+  // Можно добавить fieldType: String (например, 'text', 'select', 'number') для будущих расширений
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+const PredefinedKey = mongoose.model('PredefinedKey', predefinedKeySchema);
+
 app.get('/', (req, res) => {
   res.send('Сервер секвенсора работает!');
 });
@@ -363,6 +389,100 @@ app.delete('/api/my-collection/item/:itemId', async (req, res) => {
   } catch (error) {
     console.error('Ошибка при удалении элемента из коллекции:', error);
     res.status(500).json({ message: 'Ошибка сервера при удалении элемента', error: error.message });
+  }
+});
+
+// --- API для Предопределенных Ключей ---
+
+// Получить все предопределенные ключи
+app.get('/api/admin/predefined-keys', async (req, res) => {
+  try {
+    const keys = await PredefinedKey.find().sort({ order: 1, keyLabel: 1 }); // Сортируем по порядку и метке
+    res.status(200).json(keys);
+  } catch (error) {
+    console.error('Ошибка при получении предопределенных ключей:', error);
+    res.status(500).json({ message: 'Ошибка сервера при получении предопределенных ключей', error: error.message });
+  }
+});
+
+// Добавить новый предопределенный ключ
+app.post('/api/admin/predefined-keys', async (req, res) => {
+  try {
+    const { keyName, keyLabel, order } = req.body;
+    if (!keyName || !keyName.trim() || !keyLabel || !keyLabel.trim()) {
+      return res.status(400).json({ message: 'keyName и keyLabel являются обязательными полями.' });
+    }
+    // Проверка на уникальность keyName, Mongoose сделает это на уровне БД, но можно и предварительно
+    const existingKey = await PredefinedKey.findOne({ keyName: keyName.trim() });
+    if (existingKey) {
+        return res.status(400).json({ message: `Предопределенный ключ с именем (keyName) "${keyName}" уже существует.` });
+    }
+
+    const newKey = new PredefinedKey({
+      keyName: keyName.trim(),
+      keyLabel: keyLabel.trim(),
+      order: order || 0
+    });
+    await newKey.save();
+    res.status(201).json(newKey);
+  } catch (error) {
+    console.error('Ошибка при создании предопределенного ключа:', error);
+    if (error.code === 11000) { // Ошибка дублирования MongoDB
+        return res.status(400).json({ message: `Предопределенный ключ с таким keyName уже существует.` });
+    }
+    res.status(500).json({ message: 'Ошибка сервера при создании предопределенного ключа', error: error.message });
+  }
+});
+
+// Удалить предопределенный ключ по ID
+app.delete('/api/admin/predefined-keys/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Неверный ID предопределенного ключа.' });
+    }
+    const result = await PredefinedKey.findByIdAndDelete(id);
+    if (!result) {
+      return res.status(404).json({ message: 'Предопределенный ключ не найден для удаления.' });
+    }
+    // Важно: Удаление PredefinedKey не удаляет автоматически соответствующие поля из customFields существующих сессий.
+    // Это нужно будет обрабатывать отдельно, если такая логика потребуется (например, при отображении или миграции).
+    res.status(200).json({ message: `Предопределенный ключ '${result.keyLabel}' успешно удален.` });
+  } catch (error) {
+    console.error('Ошибка при удалении предопределенного ключа:', error);
+    res.status(500).json({ message: 'Ошибка сервера при удалении предопределенного ключа', error: error.message });
+  }
+});
+
+// (Опционально) Обновить предопределенный ключ
+app.put('/api/admin/predefined-keys/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { keyLabel, order } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Неверный ID предопределенного ключа.' });
+    }
+
+    const updateData = {};
+    if (keyLabel && keyLabel.trim()) updateData.keyLabel = keyLabel.trim();
+    if (order !== undefined) updateData.order = order;
+    // keyName обычно не обновляют после создания, т.к. он используется как идентификатор в данных сессий
+    // Если нужно разрешить обновление keyName, это потребует более сложной логики (миграция данных в сессиях).
+
+    if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: 'Нет данных для обновления.' });
+    }
+
+    const updatedKey = await PredefinedKey.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true });
+
+    if (!updatedKey) {
+      return res.status(404).json({ message: 'Предопределенный ключ не найден для обновления.' });
+    }
+    res.status(200).json(updatedKey);
+  } catch (error) {
+    console.error('Ошибка при обновлении предопределенного ключа:', error);
+    res.status(500).json({ message: 'Ошибка сервера при обновлении предопределенного ключа', error: error.message });
   }
 });
 
