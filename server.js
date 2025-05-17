@@ -46,6 +46,10 @@ const sequencerSessionSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+  customTags: { // Пользовательские теги
+    type: [String],
+    default: []
   }
 });
 
@@ -176,6 +180,47 @@ app.delete('/api/sequencer/sessions/:id', async (req, res) => {
   } catch (error) {
     console.error('Ошибка при удалении сессии по ID:', error);
     res.status(500).json({ message: 'Ошибка сервера при удалении сессии', error: error.message });
+  }
+});
+
+// Новый эндпоинт для обновления тегов сессии
+app.put('/api/sequencer/sessions/:id/tags', async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+    const { tags } = req.body; // Ожидаем массив строк [{ tags: ["tag1", "tag2"] }]
+
+    if (!mongoose.Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({ message: 'Неверный ID сессии.' });
+    }
+
+    if (!Array.isArray(tags)) {
+      return res.status(400).json({ message: 'Теги должны быть массивом.' });
+    }
+
+    // Валидация, что все элементы в массиве tags являются строками (опционально, но рекомендуется)
+    if (!tags.every(tag => typeof tag === 'string')) {
+      return res.status(400).json({ message: 'Все теги в массиве должны быть строками.' });
+    }
+
+    const updatedSession = await SequencerSession.findByIdAndUpdate(
+      sessionId,
+      { $set: { customTags: tags } }, // Полностью заменяем массив тегов
+      { new: true, runValidators: true } // Возвращаем обновленный документ и запускаем валидаторы схемы
+    );
+
+    if (!updatedSession) {
+      return res.status(404).json({ message: 'Сессия не найдена для обновления тегов.' });
+    }
+
+    res.status(200).json({ message: `Теги для сессии '${updatedSession.sessionName}' успешно обновлены.`, session: updatedSession });
+
+  } catch (error) {
+    console.error('Ошибка при обновлении тегов сессии:', error);
+    // Более детальная ошибка, если это ошибка валидации Mongoose
+    if (error.name === 'ValidationError') {
+        return res.status(400).json({ message: 'Ошибка валидации при обновлении тегов', errors: error.errors });
+    }
+    res.status(500).json({ message: 'Ошибка сервера при обновлении тегов сессии', error: error.message });
   }
 });
 
