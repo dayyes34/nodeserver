@@ -96,6 +96,20 @@ const exerciseCollectionItemSchema = new mongoose.Schema({
     trim: true,
     default: '' 
   },
+  // --- НОВЫЕ ПОЛЯ ДЛЯ ЦЕНЫ БАНДЛА ---
+  bundlePrice: {
+    type: Number, // Цена в минимальных единицах валюты (например, копейках для RUB) или основной (например, 500.00)
+                // Рекомендуется хранить в минимальных единицах (целое число) во избежание проблем с float
+                // Если цена 500 рублей, хранить 50000 (копеек)
+    default: null // или 0, если бандл по умолчанию бесплатный или цена не задана
+  },
+  bundleCurrency: { // Код валюты ISO 4217 (например, 'RUB', 'USD')
+    type: String,
+    trim: true,
+    uppercase: true,
+    default: null // или 'RUB' по умолчанию
+  },
+  // --- КОНЕЦ НОВЫХ ПОЛЕЙ ДЛЯ ЦЕНЫ ---
   // --- КОНЕЦ НОВЫХ ПОЛЕЙ ---
   createdAt: {
     type: Date,
@@ -469,7 +483,7 @@ app.delete('/api/my-collection/item/:itemId', async (req, res) => {
 app.put('/api/my-collection/folder/:folderId/settings', async (req, res) => {
   try {
     const { folderId } = req.params;
-    const { isBundle, bundleDescription } = req.body;
+    const { isBundle, bundleDescription, bundlePrice, bundleCurrency } = req.body; // Добавляем bundlePrice и bundleCurrency
 
     if (!mongoose.Types.ObjectId.isValid(folderId)) {
       return res.status(400).json({ message: 'Неверный ID папки.' });
@@ -484,10 +498,43 @@ app.put('/api/my-collection/folder/:folderId/settings', async (req, res) => {
         updateData.bundleDescription = typeof bundleDescription === 'string' ? bundleDescription.trim() : '';
     }
 
-    // Если isBundle устанавливается в false, очищаем описание
-    if (updateData.isBundle === false && updateData.bundleDescription !== undefined) {
-        updateData.bundleDescription = '';
+    // Обработка цены и валюты
+    if (isBundle === true) { // Цена и валюта имеют смысл только если это бандл
+      if (bundlePrice !== undefined && bundlePrice !== null) {
+        const price = parseFloat(bundlePrice);
+        if (!isNaN(price) && price >= 0) {
+          // Здесь важно решить, как хранить цену. Если в копейках:
+          // updateData.bundlePrice = Math.round(price * 100);
+          // Если в основных единицах (как пришло с фронта):
+          updateData.bundlePrice = price;
+        } else {
+          return res.status(400).json({ message: 'bundlePrice должен быть неотрицательным числом.' });
+        }
+        // Валюта должна быть предоставлена, если есть цена
+        if (bundleCurrency !== undefined && bundleCurrency !== null && typeof bundleCurrency === 'string' && bundleCurrency.trim().length === 3) {
+          updateData.bundleCurrency = bundleCurrency.trim().toUpperCase();
+        } else {
+          return res.status(400).json({ message: 'bundleCurrency (3-х буквенный код) обязателен, если указана цена бандла.' });
+        }
+      } else {
+        // Если isBundle=true, но цена не пришла или null, можно сбросить их или требовать
+        updateData.bundlePrice = null; 
+        updateData.bundleCurrency = null;
+      }
+    } else if (isBundle === false) {
+      // Если папка перестает быть бандлом, очищаем все связанные с бандлом поля
+      updateData.bundleDescription = '';
+      updateData.bundlePrice = null;
+      updateData.bundleCurrency = null;
     }
+
+    // Если isBundle устанавливается в false, очищаем описание (это уже было, но теперь и цену/валюту)
+    // Этот блок дублирует логику выше, если isBundle === false, его можно упростить.
+    // if (updateData.isBundle === false) { 
+    //     updateData.bundleDescription = '';
+    //     updateData.bundlePrice = null;
+    //     updateData.bundleCurrency = null;
+    // }
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ message: 'Нет данных для обновления настроек папки.' });
