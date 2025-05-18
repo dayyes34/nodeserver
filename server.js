@@ -483,7 +483,8 @@ app.delete('/api/my-collection/item/:itemId', async (req, res) => {
 app.put('/api/my-collection/folder/:folderId/settings', async (req, res) => {
   try {
     const { folderId } = req.params;
-    const { isBundle, bundleDescription, bundlePrice, bundleCurrency } = req.body; // Добавляем bundlePrice и bundleCurrency
+    const { isBundle, bundleDescription, bundlePrice, bundleCurrency } = req.body; 
+    console.log(`[Folder Settings Update] ID: ${folderId}, Received body:`, req.body); // <--- ЛОГ 1: Входящие данные
 
     if (!mongoose.Types.ObjectId.isValid(folderId)) {
       return res.status(400).json({ message: 'Неверный ID папки.' });
@@ -528,13 +529,7 @@ app.put('/api/my-collection/folder/:folderId/settings', async (req, res) => {
       updateData.bundleCurrency = null;
     }
 
-    // Если isBundle устанавливается в false, очищаем описание (это уже было, но теперь и цену/валюту)
-    // Этот блок дублирует логику выше, если isBundle === false, его можно упростить.
-    // if (updateData.isBundle === false) { 
-    //     updateData.bundleDescription = '';
-    //     updateData.bundlePrice = null;
-    //     updateData.bundleCurrency = null;
-    // }
+    console.log(`[Folder Settings Update] ID: ${folderId}, Data to update in DB:`, updateData); // <--- ЛОГ 2: Данные для записи в БД
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ message: 'Нет данных для обновления настроек папки.' });
