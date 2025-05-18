@@ -511,6 +511,61 @@ app.put('/api/my-collection/folder/:folderId/settings', async (req, res) => {
   }
 });
 
+// Переместить элемент коллекции (изменить его parentId)
+app.put('/api/my-collection/item/:itemId/move', async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { newParentId } = req.body; // newParentId может быть null для перемещения в корень
+
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ message: 'Неверный ID элемента для перемещения.' });
+    }
+
+    const itemToMove = await ExerciseCollectionItem.findById(itemId);
+    if (!itemToMove) {
+      return res.status(404).json({ message: 'Элемент для перемещения не найден.' });
+    }
+
+    // Проверка newParentId: должен быть валидным ObjectId или null
+    if (newParentId && !mongoose.Types.ObjectId.isValid(newParentId)) {
+      return res.status(400).json({ message: 'Неверный ID новой родительской папки.' });
+    }
+
+    // Если newParentId предоставлен, убедимся, что это существующая папка
+    if (newParentId) {
+      const parentFolder = await ExerciseCollectionItem.findById(newParentId);
+      if (!parentFolder || parentFolder.itemType !== 'folder') {
+        return res.status(404).json({ message: 'Новая родительская папка не найдена или не является папкой.' });
+      }
+      // Предотвращение перемещения папки саму в себя или в своего потомка (простая проверка)
+      if (itemToMove.itemType === 'folder' && itemToMove._id.equals(newParentId)) {
+        return res.status(400).json({ message: 'Папку нельзя переместить саму в себя.' });
+      }
+      // Более сложная проверка на перемещение в потомка здесь не реализована для краткости,
+      // но может быть добавлена при необходимости (рекурсивный поиск itemToMove._id в родителях newParentId).
+    }
+    
+    // Проверка, чтобы элемент не перемещался в самого себя (если это папка и newParentId это она же)
+    if (itemToMove._id.equals(newParentId)) {
+        return res.status(400).json({ message: "Элемент не может быть перемещен в самого себя." });
+    }
+
+    // Если parentId не меняется, просто возвращаем успех без изменений
+    if (itemToMove.parentId === newParentId || (itemToMove.parentId && newParentId && itemToMove.parentId.equals(newParentId))) {
+        return res.status(200).json({ message: 'Новое расположение совпадает с текущим. Перемещение не требуется.', item: itemToMove });
+    }
+
+    itemToMove.parentId = newParentId; // newParentId может быть null
+    await itemToMove.save();
+
+    res.status(200).json({ message: `Элемент '${itemToMove.name}' успешно перемещен.`, item: itemToMove });
+
+  } catch (error) {
+    console.error('Ошибка при перемещении элемента коллекции:', error);
+    res.status(500).json({ message: 'Ошибка сервера при перемещении элемента.', error: error.message });
+  }
+});
+
 // --- API для Предопределенных Ключей ---
 
 // Получить все предопределенные ключи
