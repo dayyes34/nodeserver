@@ -705,6 +705,69 @@ app.put('/api/admin/predefined-keys/:id', async (req, res) => {
   }
 });
 
+// Новый эндпоинт для получения деталей бандла для платежной системы
+app.get('/api/bundles/:bundleId/details', async (req, res) => {
+  try {
+    const { bundleId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(bundleId)) {
+      return res.status(400).json({ message: 'Неверный ID бандла.' });
+    }
+
+    const bundleItem = await ExerciseCollectionItem.findById(bundleId);
+
+    if (!bundleItem) {
+      return res.status(404).json({ message: 'Бандл не найден.' });
+    }
+
+    if (bundleItem.itemType !== 'folder' || !bundleItem.isBundle) {
+      return res.status(403).json({ message: 'Запрошенный элемент не является активным бандлом.' });
+    }
+
+    // Проверяем, есть ли цена и валюта
+    if (bundleItem.bundlePrice === null || bundleItem.bundlePrice === undefined || bundleItem.bundleCurrency === null) {
+      return res.status(404).json({ message: 'Для данного бандла не установлена цена или валюта.' });
+    }
+
+    let priceInSmallestUnit = bundleItem.bundlePrice; // По умолчанию, если не нужна конвертация
+
+    // Конвертация в минимальные единицы (например, копейки для RUB)
+    // Основываясь на https://core.telegram.org/bots/payments/currencies.json
+    // Большинство валют имеют 2 знака после запятой (exp: 2), кроме, например, JPY, HUF и т.д.
+    // Для простоты, если у нас есть цена, и валюта 'RUB', 'USD', 'EUR', умножаем на 100.
+    // В более общем случае, нужно было бы сверяться с currencies.json или хранить exp для каждой валюты.
+    const popularCurrenciesWithTwoDecimalPlaces = ['RUB', 'USD', 'EUR', 'GBP']; // Дополнить при необходимости
+    
+    if (popularCurrenciesWithTwoDecimalPlaces.includes(bundleItem.bundleCurrency.toUpperCase())) {
+      // Убедимся, что bundlePrice это число. Если оно хранится как 500.00, то Math.round(500.00 * 100) = 50000
+      priceInSmallestUnit = Math.round(parseFloat(bundleItem.bundlePrice) * 100);
+    } else {
+      // Для валют, где не предполагаются дробные части (например, JPY) или для которых мы не знаем множитель,
+      // предполагаем, что цена уже в минимальных единицах (или не требует конвертации).
+      // Важно: Убедитесь, что цена для таких валют хранится корректно.
+      priceInSmallestUnit = Math.round(parseFloat(bundleItem.bundlePrice)); // Просто округляем на всякий случай
+    }
+
+    if (isNaN(priceInSmallestUnit) || priceInSmallestUnit < 0) {
+        // Эта проверка на случай, если parseFloat(bundleItem.bundlePrice) вернул NaN
+        console.error(`[Bundle Details] Ошибка конвертации цены для бандла ${bundleId}. bundlePrice: ${bundleItem.bundlePrice}`);
+        return res.status(500).json({ message: 'Ошибка при обработке цены бандла.'});
+    }
+
+
+    res.status(200).json({
+      title: bundleItem.name, // Название папки-бандла
+      description: bundleItem.bundleDescription || '', // Описание бандла
+      price_in_smallest_unit: priceInSmallestUnit,
+      currency: bundleItem.bundleCurrency.toUpperCase(),
+      // photo_url: bundleItem.bundleImageUrl || null, // Если вы решите добавить поле для URL картинки бандла
+    });
+
+  } catch (error) {
+    console.error(`[Bundle Details] Ошибка при получении деталей бандла ${req.params.bundleId}:`, error);
+    res.status(500).json({ message: 'Ошибка сервера при получении деталей бандла.', error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
 });
