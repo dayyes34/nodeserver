@@ -23,6 +23,8 @@ mongoose.connect(mongoURI)
   process.exit(1);
 });
 
+const ITEMS_PER_PAGE = 100; // Для пагинации, если понадобится
+
 const sequencerSessionSchema = new mongoose.Schema({
   sessionName: {
     type: String,
@@ -137,6 +139,43 @@ const predefinedKeySchema = new mongoose.Schema({
 });
 
 const PredefinedKey = mongoose.model('PredefinedKey', predefinedKeySchema);
+
+// --- НОВАЯ СХЕМА ДЛЯ ПОКУПОК ПОЛЬЗОВАТЕЛЕЙ ---
+const userPurchaseSchema = new mongoose.Schema({
+  telegramUserId: {
+    type: Number, // Telegram User ID
+    required: true,
+    index: true,
+  },
+  bundleId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ExerciseCollectionItem', // Ссылка на бандл (который является ExerciseCollectionItem типа 'folder' и isBundle: true)
+    required: true,
+    index: true,
+  },
+  purchaseDate: {
+    type: Date,
+    default: Date.now,
+  },
+  telegramPaymentChargeId: { // ID платежа от Telegram
+    type: String,
+    index: true,
+    sparse: true, // Индексировать, только если поле существует
+  },
+  providerPaymentChargeId: { // ID платежа от провайдера (например, Stripe, ЮKassa)
+    type: String,
+    index: true,
+    sparse: true,
+  }
+});
+
+// Уникальный составной индекс, чтобы пользователь не мог "купить" один и тот же бандл дважды, если это ваша логика
+// Если повторные покупки возможны (например, подписка или расходники), этот индекс не нужен или должен быть другим.
+// Для бандлов обычно покупка разовая.
+userPurchaseSchema.index({ telegramUserId: 1, bundleId: 1 }, { unique: true });
+
+const UserPurchase = mongoose.model('UserPurchase', userPurchaseSchema);
+// --- КОНЕЦ НОВОЙ СХЕМЫ ---
 
 app.get('/', (req, res) => {
   res.send('Сервер секвенсора работает!');
@@ -767,6 +806,65 @@ app.get('/api/bundles/:bundleId/details', async (req, res) => {
     res.status(500).json({ message: 'Ошибка сервера при получении деталей бандла.', error: error.message });
   }
 });
+
+// --- НОВЫЙ ЭНДПОИНТ ДЛЯ РЕГИСТРАЦИИ ПОКУПКИ БАНДЛА ---
+app.post('/api/users/:telegramUserId/grant-bundle-access', async (req, res) => {
+  try {
+    const { telegramUserId } = req.params;
+    const { bundleId, telegramPaymentChargeId, providerPaymentChargeId } = req.body;
+
+    console.log(`[Grant Access] Attempt to grant access for user ${telegramUserId} to bundle ${bundleId}`);
+
+    if (!telegramUserId || !bundleId) {
+      return res.status(400).json({ message: 'Отсутствует ID пользователя или ID бандла.' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(bundleId)) {
+      return res.status(400).json({ message: 'Неверный формат ID бандла.' });
+    }
+    
+    // 1. Проверяем, существует ли такой бандл и является ли он действительно бандлом
+    const bundleItem = await ExerciseCollectionItem.findById(bundleId);
+    if (!bundleItem) {
+      return res.status(404).json({ message: 'Бандл не найден.' });
+    }
+    if (bundleItem.itemType !== 'folder' || !bundleItem.isBundle) {
+      return res.status(400).json({ message: 'Указанный ID не принадлежит бандлу.' });
+    }
+
+    // 2. Проверяем, не купил ли пользователь этот бандл ранее (из-за unique index это также будет ошибкой БД)
+    const existingPurchase = await UserPurchase.findOne({ telegramUserId: Number(telegramUserId), bundleId });
+    if (existingPurchase) {
+      console.log(`[Grant Access] User ${telegramUserId} already owns bundle ${bundleId}. Purchase record ID: ${existingPurchase._id}`);
+      // Можно вернуть 200 OK, так как доступ уже есть, или 409 Conflict.
+      // Для идемпотентности лучше 200.
+      return res.status(200).json({ message: 'Доступ к этому бандлу у пользователя уже есть.', purchase: existingPurchase });
+    }
+
+    // 3. Создаем запись о покупке
+    const newPurchase = new UserPurchase({
+      telegramUserId: Number(telegramUserId),
+      bundleId,
+      telegramPaymentChargeId,
+      providerPaymentChargeId,
+    });
+    await newPurchase.save();
+
+    console.log(`[Grant Access] Access granted for user ${telegramUserId} to bundle ${bundleId}. New purchase ID: ${newPurchase._id}`);
+    res.status(201).json({ message: 'Доступ к бандлу успешно предоставлен.', purchase: newPurchase });
+
+  } catch (error) {
+    console.error('[Grant Access] Error granting bundle access:', error);
+    if (error.code === 11000) { // Ошибка дублирующего ключа (из-за unique index)
+        console.warn(`[Grant Access] Attempt to create duplicate purchase for user ${req.params.telegramUserId}, bundle ${req.body.bundleId}.`);
+        // Находим существующую запись, чтобы вернуть ее
+        const existing = await UserPurchase.findOne({ telegramUserId: Number(req.params.telegramUserId), bundleId: req.body.bundleId });
+        return res.status(409).json({ message: 'Этот бандл уже был приобретен ранее.', purchase: existing });
+    }
+    res.status(500).json({ message: 'Внутренняя ошибка сервера при предоставлении доступа.' });
+  }
+});
+// --- КОНЕЦ НОВОГО ЭНДПОИНТА ---
 
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
