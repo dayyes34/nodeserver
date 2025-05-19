@@ -864,7 +864,32 @@ app.post('/api/users/:telegramUserId/grant-bundle-access', async (req, res) => {
     res.status(500).json({ message: 'Внутренняя ошибка сервера при предоставлении доступа.' });
   }
 });
-// --- КОНЕЦ НОВОГО ЭНДПОИНТА ---
+
+// --- НОВЫЙ ЭНДПОИНТ ДЛЯ ПОЛУЧЕНИЯ КУПЛЕННЫХ БАНДЛОВ ПОЛЬЗОВАТЕЛЯ ---
+app.get('/api/users/:telegramUserId/my-purchases', async (req, res) => {
+  try {
+    const { telegramUserId } = req.params;
+    if (!telegramUserId) {
+      return res.status(400).json({ message: 'Отсутствует ID пользователя.' });
+    }
+
+    // Валидация telegramUserId (должен быть числом)
+    const numericTelegramUserId = Number(telegramUserId);
+    if (isNaN(numericTelegramUserId)) {
+      return res.status(400).json({ message: 'ID пользователя должен быть числом.' });
+    }
+
+    const purchases = await UserPurchase.find({ telegramUserId: numericTelegramUserId }, 'bundleId'); // Выбираем только поле bundleId
+    
+    const purchasedBundleIds = purchases.map(p => p.bundleId);
+    
+    res.status(200).json({ purchasedBundleIds });
+
+  } catch (error) {
+    console.error(`[My Purchases] Error fetching purchases for user ${req.params.telegramUserId}:`, error);
+    res.status(500).json({ message: 'Внутренняя ошибка сервера при получении списка покупок.' });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
