@@ -6,7 +6,7 @@ const connectDB = require('./config/database');
 const sequencerRoutes = require('./routes/sequencer');
 const exerciseCollectionRoutes = require('./routes/exerciseCollection');
 const predefinedKeysRoutes = require('./routes/predefinedKeys');
-const userPurchasesRoutes = require('./routes/userPurchases');
+const bundleRoutes = require('./routes/bundles');
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -51,7 +51,7 @@ app.get('/', (req, res) => {
 app.use('/api/sequencer', sequencerRoutes);
 app.use('/api/my-collection', exerciseCollectionRoutes);
 app.use('/api/admin/predefined-keys', predefinedKeysRoutes);
-app.use('/api', userPurchasesRoutes);
+app.use('/api/bundles', bundleRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
