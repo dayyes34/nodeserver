@@ -19,17 +19,23 @@ const getBundleDetails = async (req, res) => {
       return res.status(400).json({ message: 'Указанный элемент не является бандлом.' });
     }
 
+    // Конвертируем цену в наименьшие единицы валюты
+    // bundlePrice в базе хранится в основных единицах (рубли, доллары)
+    // Telegram API ожидает цену в наименьших единицах (копейки, центы)
+    const priceInSmallestUnit = bundle.bundlePrice ? Math.round(bundle.bundlePrice * 100) : 0;
+
     // Формируем ответ в формате, ожидаемом telegram сервером
     const bundleDetails = {
       id: bundle._id,
       title: bundle.name,
       description: bundle.bundleDescription || '',
-      price_in_smallest_unit: bundle.bundlePrice || 0, // Цена в копейках/центах
+      price_in_smallest_unit: priceInSmallestUnit, // Цена в копейках/центах
       currency: bundle.bundleCurrency || 'RUB',
       // Дополнительные поля при необходимости
       // photo_url: bundle.photoUrl,
     };
 
+    console.log(`Bundle details for ${bundleId}: price ${bundle.bundlePrice} ${bundle.bundleCurrency} -> ${priceInSmallestUnit} smallest units`);
     res.status(200).json(bundleDetails);
 
   } catch (error) {
