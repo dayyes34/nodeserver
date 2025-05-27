@@ -45,6 +45,15 @@ const exerciseCollectionItemSchema = new mongoose.Schema({
     uppercase: true,
     default: null
   },
+  collectionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'BundleCollection',
+    default: null
+  },
+  collectionOrder: {
+    type: Number,
+    default: 0 // Порядок отображения внутри коллекции
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -52,5 +61,7 @@ const exerciseCollectionItemSchema = new mongoose.Schema({
 });
 
 exerciseCollectionItemSchema.index({ parentId: 1, itemType: 1, name: 1 });
+exerciseCollectionItemSchema.index({ collectionId: 1, isBundle: 1 });
+exerciseCollectionItemSchema.index({ collectionId: 1, collectionOrder: 1 });
 
 module.exports = mongoose.model('ExerciseCollectionItem', exerciseCollectionItemSchema); 

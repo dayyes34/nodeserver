@@ -1,5 +1,7 @@
 // server.js
 require('dotenv').config();
+// Загружаем дополнительные переменные для разработки
+require('dotenv').config({ path: '.env.local' });
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/database');
@@ -7,6 +9,7 @@ const sequencerRoutes = require('./routes/sequencer');
 const exerciseCollectionRoutes = require('./routes/exerciseCollection');
 const predefinedKeysRoutes = require('./routes/predefinedKeys');
 const bundleRoutes = require('./routes/bundles');
+const bundleCollectionRoutes = require('./routes/bundleCollections');
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -52,6 +55,7 @@ app.use('/api/sequencer', sequencerRoutes);
 app.use('/api/my-collection', exerciseCollectionRoutes);
 app.use('/api/admin/predefined-keys', predefinedKeysRoutes);
 app.use('/api/bundles', bundleRoutes);
+app.use('/api/bundle-collections', bundleCollectionRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

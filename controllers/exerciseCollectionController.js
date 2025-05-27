@@ -1,4 +1,5 @@
 const ExerciseCollectionItem = require('../models/ExerciseCollectionItem');
+const BundleCollection = require('../models/BundleCollection');
 const SequencerSession = require('../models/SequencerSession');
 const mongoose = require('mongoose');
 
@@ -6,6 +7,7 @@ const mongoose = require('mongoose');
 const getAllItems = async (req, res) => {
   try {
     const items = await ExerciseCollectionItem.find()
+      .populate('collectionId', 'name description icon color')
       .sort({ parentId: 1, itemType: 1, name: 1 });
     res.status(200).json(items);
   } catch (error) {
@@ -135,7 +137,7 @@ const deleteItem = async (req, res) => {
 const updateFolderSettings = async (req, res) => {
   try {
     const { folderId } = req.params;
-    const { isBundle, bundleDescription, bundlePrice, bundleCurrency } = req.body;
+    const { isBundle, bundleDescription, bundlePrice, bundleCurrency, collectionId, collectionOrder } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(folderId)) {
       return res.status(400).json({ message: 'Неверный ID папки.' });
@@ -151,7 +153,39 @@ const updateFolderSettings = async (req, res) => {
       updateData.bundleDescription = typeof bundleDescription === 'string' ? bundleDescription.trim() : '';
     }
 
+    // Обработка коллекции и порядка отображения
     if (isBundle === true) {
+      // Проверяем collectionId, если он указан
+      if (collectionId !== undefined) {
+        if (collectionId === null || collectionId === '') {
+          updateData.collectionId = null;
+          updateData.collectionOrder = 0; // Сбрасываем порядок, если коллекция не выбрана
+        } else {
+          if (!mongoose.Types.ObjectId.isValid(collectionId)) {
+            return res.status(400).json({ message: 'Неверный ID коллекции.' });
+          }
+          
+          // Проверяем, что коллекция существует
+          const collection = await BundleCollection.findById(collectionId);
+          if (!collection) {
+            return res.status(404).json({ message: 'Коллекция не найдена.' });
+          }
+          
+          updateData.collectionId = collectionId;
+        }
+      }
+
+      // Обработка порядка отображения
+      if (collectionOrder !== undefined) {
+        const order = parseInt(collectionOrder);
+        if (!isNaN(order) && order >= 0) {
+          updateData.collectionOrder = order;
+        } else {
+          return res.status(400).json({ message: 'Порядок отображения должен быть неотрицательным числом.' });
+        }
+      }
+
+      // Обработка цены и валюты
       if (bundlePrice !== undefined && bundlePrice !== null) {
         const price = parseFloat(bundlePrice);
         if (!isNaN(price) && price >= 0) {
@@ -176,6 +210,8 @@ const updateFolderSettings = async (req, res) => {
       updateData.bundleDescription = '';
       updateData.bundlePrice = null;
       updateData.bundleCurrency = null;
+      updateData.collectionId = null;
+      updateData.collectionOrder = 0;
     }
 
     if (Object.keys(updateData).length === 0) {
