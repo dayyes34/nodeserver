@@ -35,6 +35,11 @@ const exerciseCollectionItemSchema = new mongoose.Schema({
     trim: true,
     default: '' 
   },
+  bundleExtendedDescription: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   bundlePrice: {
     type: Number,
     default: null

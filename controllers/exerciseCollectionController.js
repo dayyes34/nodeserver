@@ -137,7 +137,7 @@ const deleteItem = async (req, res) => {
 const updateFolderSettings = async (req, res) => {
   try {
     const { folderId } = req.params;
-    const { isBundle, bundleDescription, bundlePrice, bundleCurrency, collectionId, collectionOrder } = req.body;
+    const { isBundle, bundleDescription, bundleExtendedDescription, bundlePrice, bundleCurrency, collectionId, collectionOrder } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(folderId)) {
       return res.status(400).json({ message: 'Неверный ID папки.' });
@@ -151,6 +151,10 @@ const updateFolderSettings = async (req, res) => {
 
     if (bundleDescription !== undefined) {
       updateData.bundleDescription = typeof bundleDescription === 'string' ? bundleDescription.trim() : '';
+    }
+
+    if (bundleExtendedDescription !== undefined) {
+      updateData.bundleExtendedDescription = typeof bundleExtendedDescription === 'string' ? bundleExtendedDescription.trim() : '';
     }
 
     // Обработка коллекции и порядка отображения
@@ -208,6 +212,7 @@ const updateFolderSettings = async (req, res) => {
       }
     } else if (isBundle === false) {
       updateData.bundleDescription = '';
+      updateData.bundleExtendedDescription = '';
       updateData.bundlePrice = null;
       updateData.bundleCurrency = null;
       updateData.collectionId = null;
