@@ -24,6 +24,11 @@ const getBundleDetails = async (req, res) => {
     // Telegram API ожидает цену в наименьших единицах (копейки, центы)
     const priceInSmallestUnit = bundle.bundlePrice ? Math.round(bundle.bundlePrice * 100) : 0;
 
+    // Формируем URL изображения бандла
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const baseUrl = isDevelopment ? 'http://localhost:3000' : 'https://rhythmcapsule.ru';
+    const photoUrl = `${baseUrl}/images/base/${bundle._id}.jpg`; // Предполагаем, что изображения в формате jpg
+
     // Формируем ответ в формате, ожидаемом telegram сервером
     const bundleDetails = {
       id: bundle._id,
@@ -31,8 +36,7 @@ const getBundleDetails = async (req, res) => {
       description: bundle.bundleDescription || '',
       price_in_smallest_unit: priceInSmallestUnit, // Цена в копейках/центах
       currency: bundle.bundleCurrency || 'RUB',
-      // Дополнительные поля при необходимости
-      // photo_url: bundle.photoUrl,
+      photo_url: photoUrl, // URL изображения для инвойса
     };
 
     console.log(`Bundle details for ${bundleId}: price ${bundle.bundlePrice} ${bundle.bundleCurrency} -> ${priceInSmallestUnit} smallest units`);

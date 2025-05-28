@@ -298,6 +298,11 @@ const getCollectionDetails = async (req, res) => {
     // Telegram API ожидает цену в наименьших единицах (копейки, центы)
     const priceInSmallestUnit = Math.round(collection.collectionPrice * 100);
 
+    // Формируем URL изображения коллекции
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const baseUrl = isDevelopment ? 'http://localhost:3000' : 'https://rhythmcapsule.ru';
+    const photoUrl = `${baseUrl}/images/collections/${collection._id}.jpg`; // Изображения коллекций в отдельной папке
+
     // Формируем ответ в формате, ожидаемом telegram сервером
     const collectionDetails = {
       id: collection._id,
@@ -305,6 +310,7 @@ const getCollectionDetails = async (req, res) => {
       description: collection.description || '',
       price_in_smallest_unit: priceInSmallestUnit, // Цена в копейках/центах
       currency: collection.collectionCurrency || 'RUB',
+      photo_url: photoUrl, // URL изображения для инвойса
       icon: collection.icon,
       color: collection.color
     };
