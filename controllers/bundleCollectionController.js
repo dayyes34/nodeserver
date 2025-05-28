@@ -22,6 +22,8 @@ const getAllCollections = async (req, res) => {
           icon: collection.icon,
           color: collection.color,
           order: collection.order,
+          collectionPrice: collection.collectionPrice,
+          collectionCurrency: collection.collectionCurrency,
           bundleCount,
           createdAt: collection.createdAt,
           updatedAt: collection.updatedAt
