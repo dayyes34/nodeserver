@@ -5,6 +5,9 @@ const bundleCollectionController = require('../controllers/bundleCollectionContr
 // Получить все активные коллекции
 router.get('/', bundleCollectionController.getAllCollections);
 
+// Получить детали коллекции для платежной системы
+router.get('/:collectionId/details', bundleCollectionController.getCollectionDetails);
+
 // Получить бандлы определенной коллекции
 router.get('/:collectionId/bundles', bundleCollectionController.getBundlesByCollection);
 

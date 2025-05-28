@@ -25,6 +25,16 @@ const bundleCollectionSchema = new mongoose.Schema({
     type: Number,
     default: 0 // Для сортировки коллекций
   },
+  collectionPrice: {
+    type: Number,
+    default: null // Цена коллекции в основных единицах валюты
+  },
+  collectionCurrency: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    default: null // Валюта коллекции (RUB, USD, EUR и т.д.)
+  },
   isActive: {
     type: Boolean,
     default: true

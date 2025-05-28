@@ -86,10 +86,30 @@ const getBundlesByCollection = async (req, res) => {
 // Создать новую коллекцию
 const createCollection = async (req, res) => {
   try {
-    const { name, description, icon, color, order } = req.body;
+    const { name, description, icon, color, order, collectionPrice, collectionCurrency } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Название коллекции обязательно.' });
+    }
+
+    // Валидация цены и валюты
+    let price = null;
+    let currency = null;
+    
+    if (collectionPrice !== undefined && collectionPrice !== null) {
+      const parsedPrice = parseFloat(collectionPrice);
+      if (!isNaN(parsedPrice) && parsedPrice >= 0) {
+        price = parsedPrice;
+        
+        if (!collectionCurrency || typeof collectionCurrency !== 'string' || collectionCurrency.trim().length !== 3) {
+          return res.status(400).json({ 
+            message: 'collectionCurrency (3-х буквенный код) обязателен, если указана цена коллекции.' 
+          });
+        }
+        currency = collectionCurrency.trim().toUpperCase();
+      } else {
+        return res.status(400).json({ message: 'collectionPrice должен быть неотрицательным числом.' });
+      }
     }
 
     const newCollection = new BundleCollection({
@@ -97,7 +117,9 @@ const createCollection = async (req, res) => {
       description: description ? description.trim() : '',
       icon: icon || '📚',
       color: color || '#00AFFF',
-      order: order || 0
+      order: order || 0,
+      collectionPrice: price,
+      collectionCurrency: currency
     });
 
     const savedCollection = await newCollection.save();
@@ -112,7 +134,7 @@ const createCollection = async (req, res) => {
 const updateCollection = async (req, res) => {
   try {
     const { collectionId } = req.params;
-    const { name, description, icon, color, order, isActive } = req.body;
+    const { name, description, icon, color, order, isActive, collectionPrice, collectionCurrency } = req.body;
 
     if (!collectionId) {
       return res.status(400).json({ message: 'ID коллекции не предоставлен.' });
@@ -125,6 +147,30 @@ const updateCollection = async (req, res) => {
     if (color !== undefined) updateData.color = color;
     if (order !== undefined) updateData.order = order;
     if (isActive !== undefined) updateData.isActive = isActive;
+
+    // Обработка цены и валюты коллекции
+    if (collectionPrice !== undefined) {
+      if (collectionPrice === null) {
+        updateData.collectionPrice = null;
+        updateData.collectionCurrency = null;
+      } else {
+        const parsedPrice = parseFloat(collectionPrice);
+        if (!isNaN(parsedPrice) && parsedPrice >= 0) {
+          updateData.collectionPrice = parsedPrice;
+          
+          if (!collectionCurrency || typeof collectionCurrency !== 'string' || collectionCurrency.trim().length !== 3) {
+            return res.status(400).json({ 
+              message: 'collectionCurrency (3-х буквенный код) обязателен, если указана цена коллекции.' 
+            });
+          }
+          updateData.collectionCurrency = collectionCurrency.trim().toUpperCase();
+        } else {
+          return res.status(400).json({ message: 'collectionPrice должен быть неотрицательным числом.' });
+        }
+      }
+    }
+
+    updateData.updatedAt = new Date();
 
     const updatedCollection = await BundleCollection.findByIdAndUpdate(
       collectionId,
@@ -222,11 +268,60 @@ const assignBundleToCollection = async (req, res) => {
   }
 };
 
+// Получить детали коллекции для платежной системы
+const getCollectionDetails = async (req, res) => {
+  try {
+    const { collectionId } = req.params;
+    
+    if (!collectionId) {
+      return res.status(400).json({ message: 'ID коллекции не предоставлен.' });
+    }
+
+    const collection = await BundleCollection.findById(collectionId);
+    
+    if (!collection) {
+      return res.status(404).json({ message: 'Коллекция не найдена.' });
+    }
+
+    if (!collection.isActive) {
+      return res.status(400).json({ message: 'Коллекция неактивна.' });
+    }
+
+    if (!collection.collectionPrice) {
+      return res.status(400).json({ message: 'У коллекции не установлена цена.' });
+    }
+
+    // Конвертируем цену в наименьшие единицы валюты
+    // collectionPrice в базе хранится в основных единицах (рубли, доллары)
+    // Telegram API ожидает цену в наименьших единицах (копейки, центы)
+    const priceInSmallestUnit = Math.round(collection.collectionPrice * 100);
+
+    // Формируем ответ в формате, ожидаемом telegram сервером
+    const collectionDetails = {
+      id: collection._id,
+      title: collection.name,
+      description: collection.description || '',
+      price_in_smallest_unit: priceInSmallestUnit, // Цена в копейках/центах
+      currency: collection.collectionCurrency || 'RUB',
+      icon: collection.icon,
+      color: collection.color
+    };
+
+    console.log(`Collection details for ${collectionId}: price ${collection.collectionPrice} ${collection.collectionCurrency} -> ${priceInSmallestUnit} smallest units`);
+    res.status(200).json(collectionDetails);
+
+  } catch (error) {
+    console.error('Ошибка при получении деталей коллекции:', error);
+    res.status(500).json({ message: 'Внутренняя ошибка сервера при получении деталей коллекции.' });
+  }
+};
+
 module.exports = {
   getAllCollections,
   getBundlesByCollection,
   createCollection,
   updateCollection,
   deleteCollection,
-  assignBundleToCollection
+  assignBundleToCollection,
+  getCollectionDetails
 }; 
