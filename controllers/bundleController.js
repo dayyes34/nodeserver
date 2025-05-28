@@ -26,7 +26,8 @@ const getBundleDetails = async (req, res) => {
 
     // Формируем URL изображения бандла
     const isDevelopment = process.env.NODE_ENV === 'development';
-    const baseUrl = isDevelopment ? 'http://localhost:3000' : 'https://rhythmcapsule.ru';
+    // Принудительно используем HTTPS для совместимости с мобильными клиентами Telegram
+    const baseUrl = 'https://rhythmcapsule.ru';
     const photoUrl = `${baseUrl}/images/base/${bundle._id}.jpg`; // Предполагаем, что изображения в формате jpg
 
     // Формируем ответ в формате, ожидаемом telegram сервером

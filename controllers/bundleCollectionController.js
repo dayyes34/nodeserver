@@ -300,7 +300,8 @@ const getCollectionDetails = async (req, res) => {
 
     // Формируем URL изображения коллекции
     const isDevelopment = process.env.NODE_ENV === 'development';
-    const baseUrl = isDevelopment ? 'http://localhost:3000' : 'https://rhythmcapsule.ru';
+    // Принудительно используем HTTPS для совместимости с мобильными клиентами Telegram
+    const baseUrl = 'https://rhythmcapsule.ru';
     const photoUrl = `${baseUrl}/images/collections/${collection._id}.jpg`; // Изображения коллекций в отдельной папке
 
     // Формируем ответ в формате, ожидаемом telegram сервером
